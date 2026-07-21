@@ -1,0 +1,47 @@
+# Configuration for Chignolin (CLN025) trajectory analysis
+# All paths reference the NYU HPC filesystem.
+
+system: chignolin
+
+# --- Trajectory data (on HPC cluster, not in this repo) ---
+# Full 500 k-frame trajectory (GROMACS XTC format)
+trajectory_xtc:
+  - /scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/CLN025-0-protein-all_fiti_alpC.xtc
+
+# Alternate concatenated file (all frames, used in some notebooks)
+trajectory_xtc_all:
+  - /scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/all_frames_chignoling.xtc
+
+# Reference PDB topology (folded structure, used for PyEMMA featurization)
+topology_pdb: /scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/folded_struc.pdb
+
+# Local aligned structure (for visualization, e.g. VMD / PyMOL)
+aligned_pdb: structures/chignolin/Chignolin_Aligned.pdb
+
+# --- Clustering ---
+# Cluster CSV with columns: Time_ps, Cluster_ID
+# Produced by notebooks/01_clustering.ipynb
+# cluster_csv: data/chignolin/cluster_40.csv
+
+# Cluster probability CSV with columns: Time_ps, Cluster_ID, Committor_prob
+# Produced by notebooks/02_committor_counting.ipynb
+# cluster_prob_csv: data/chignolin/cluster_40_prob.csv
+
+# --- Committor state definitions ---
+# Best-validated assignment (cluster 1 = most-folded, cluster 7 = most-unfolded)
+folded_clusters:   [1]
+unfolded_clusters: [7]
+
+# --- Feature extraction ---
+stride: 10   # Load every 10th frame (≈ 50 k frames from 500 k)
+
+# --- Native contacts (Q) ---
+# Reference structure for native-contact definition (defaults to topology_pdb)
+# native_pdb: null
+q_folded_threshold: 0.8
+q_unfolded_threshold: 0.2
+
+# Where to write Q_values.csv. Defaults to data/<system>/ if unset.
+# Kept alongside the existing MDTraj feature table for this system so all
+# MDTraj-derived per-frame outputs live in one place.
+q_output_dir: /scratch/mma9420/committor_check/Q
