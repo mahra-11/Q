@@ -95,8 +95,3 @@ P=0.5 at **Q\* ≈ 0.554**. The visit-based and tiered methods agree closely acr
 with only minor divergence in the sparsely-sampled transition region — a good sign that the estimate
 is robust to the specific choice of autocorrelation-correction method.
 
-## Notebook
-
-- `notebooks/00_native_contacts_Q.ipynb` — an earlier, interactive (Jupyter) version of the Q
-  computation + folded/unfolded frame identification step. The SLURM scripts above supersede this for
-  actual production runs; kept here as a reference/exploratory version.
