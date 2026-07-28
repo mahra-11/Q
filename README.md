@@ -95,3 +95,65 @@ P=0.5 at **Q\* ≈ 0.554**. The visit-based and tiered methods agree closely acr
 with only minor divergence in the sparsely-sampled transition region — a good sign that the estimate
 is robust to the specific choice of autocorrelation-correction method.
 
+### Regression (structural features → committor) hit a real ceiling
+
+Predicting the visit-based committor label from the 64 MDTraj structural features (`contact_resX_resY`,
+`phi/psi_sin/cos_N`) with LightGBM looked strong overall (test R² = 0.9888) but that's dominated by
+the easy majority of frames sitting at committor ≈ 1. Restricted to the transition region
+(committor in (0.2, 0.8)) — the part that actually matters for locating the transition state —
+test R² was only **0.0230**. Diagnostics (label-noise splits, training on transition-region-only
+frames, regularization sweeps — not yet in this repo, see gap note below) pushed that up to at best
+~0.31–0.34, which looks like a real ceiling for *this* combination of binned labels and features, not
+a tuning problem. This is a known, named difficulty in transition-path theory, not an artifact of this
+pipeline: committor labels are inherently noisy near p=0.5 (any individual trajectory is either
+crossing or not — the "signal" is stochastic), and data is scarce exactly where it's needed most.
+
+**⚠️ Gap**: the regression-phase scripts (`build_regression_dataset.py`, `run_q_regression.sbatch`,
+`check_*.py`/`run_check_*.sbatch` diagnostics) that produced the numbers above exist only on the HPC
+filesystem (`/scratch/mma9420/q_pipeline/scripts/`) — this session didn't have HPC access, so they
+still haven't been copied into this repo. Worth doing before they're lost.
+
+## Physics-informed committor learning
+
+Rather than continuing to fight noisy, pre-binned labels, this phase trains a neural network
+`q_θ(x)` directly against the committor's defining physics instead of a label at all: it's a
+**martingale** under the dynamics, `q(x_t) = E[q(x_{t+τ}) | x_t]`. Every consecutive (or short-lag)
+frame pair in the 534,743-frame trajectory is a training signal — no Rg×Q binning, no
+label-scarcity problem in the transition region, no separate "confidence" bookkeeping.
+
+- `src/pinn_committor.py` — core module:
+  - `CommittorNet` — MLP (`hidden_dims`, default `[128, 128, 64]`) with a sigmoid output, same 64
+    structural features as input.
+  - `FeatureScaler` — standardizes features, fit on the training split only.
+  - `make_lagged_pairs()` — finds `(x_t, x_{t+lag})` row pairs by actual `frame_index` difference
+    (not row position), so a pair is never accidentally formed across a gap left by an earlier
+    inner-join.
+  - `committor_loss()` — martingale term `(q_θ(x_t) - q_θ(x_{t+lag}))²` + a boundary term anchoring
+    `q_θ ≈ 0` for confidently-unfolded frames (`Q ≤ 0.1`) and `q_θ ≈ 1` for confidently-folded frames
+    (`Q ≥ 0.9`), weighted by `boundary_weight`. The boundary term isn't optional — the martingale loss
+    alone is degenerate (any constant function scores zero), so it's what anchors the network to an
+    actual committor instead of a trivial solution.
+  - `train()` — training loop; splits into train/val by contiguous trajectory blocks (not randomly),
+    since neighboring frames are highly autocorrelated and a random split would leak across it.
+- `scripts/build_pinn_dataset.py` — merges the MDTraj feature table with `Q_values_allframes.csv`
+  (same `frame_index = Time_ps / 200` merge key as the rest of the pipeline — **not** the raw `Frame`
+  column) into `pinn_dataset.csv`. Unlike `build_regression_dataset.py`, this attaches no committor
+  label at all — just features, `frame_index`, and `Q` for the boundary condition.
+- `scripts/train_pinn_committor.py` — loads `pinn_dataset.csv`, trains `CommittorNet`, saves the model
+  checkpoint (`committor_net.pt`), loss-curve plot, per-frame predictions, and — as a sanity check —
+  a plot of the trained `q_θ` binned by Q overlaid on the empirical visit-based curve
+  (`committor_1d_visits_sem.csv`). Good agreement between the two is evidence the network learned a
+  real committor rather than something degenerate.
+- `scripts/run_pinn_committor.sbatch` — SLURM job: installs CPU-only PyTorch into `committor_env` if
+  missing (it wasn't previously needed — everything else in this repo is sklearn/LightGBM/MDTraj),
+  then runs the two scripts above. CPU should be fine given how small Chignolin is; switch to a GPU
+  partition (commented in the script) if training turns out to be slow in practice.
+- `config/chignolin.yaml`'s `pinn:` section holds all the hyperparameters (`lag`, `hidden_dims`,
+  `epochs`, `boundary_weight`, boundary thresholds, etc.) — see the inline comments there, especially
+  around `lag`, which is the main open tuning knob (short lag risks single-step noise dominating the
+  signal; long lag risks frames no longer being meaningfully correlated, weakening the constraint).
+
+**Not yet run** — this was built without HPC filesystem access in this session, so it hasn't been
+executed against the real data or compared to the regression baseline yet. Next step is running
+`scripts/run_pinn_committor.sbatch` on the HPC and checking `pinn_vs_empirical_committor.png`.
+
