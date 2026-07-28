@@ -30,6 +30,15 @@ q_pred distribution: histogram counts, and fraction landing near 0 (<0.1),
 near 1 (>0.9), vs genuinely intermediate (0.1-0.9). A bimodal shape
 (most mass near 0/1) confirms explanation 1; a roughly unimodal spread
 around the true value confirms explanation 2.
+
+It then also splits the region into that intermediate slice vs. the
+saturated (near-0/near-1) slice and reports R^2/RMSE against the
+empirical curve for each separately (same interpolated-target methodology
+as compare_pinn_empirical.py). This answers the natural follow-up: is the
+handful of predictions that *aren't* collapsed actually accurate? If so,
+the collapse mechanism is the whole problem and worth fixing (e.g. via
+scripts/sweep_pinn_hparams.py); if even the non-collapsed slice is a poor
+fit, something more fundamental than the collapse is going on.
 """
 import os
 import sys
@@ -78,6 +87,47 @@ print(f"  mean={q_pred.mean():.3f}  std={q_pred.std():.3f}  "
 
 verdict = "BIMODAL COLLAPSE" if (near_0 + near_1) > 0.5 else "SPREAD (not collapsed)"
 print(f"\nVerdict: {verdict}")
+
+
+def r2_rmse(y_true, y_pred):
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - y_true.mean()) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return r2, np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+
+q_curve = emp["q_bin_center"].to_numpy()
+p_curve = emp["p_folded_visits"].to_numpy()
+sub = sub.copy()
+sub["target"] = np.interp(sub["Q"], q_curve, p_curve)
+
+intermediate_mask = (sub["q_pred"] >= 0.1) & (sub["q_pred"] <= 0.9)
+saturated_df = sub[~intermediate_mask]
+intermediate_df = sub[intermediate_mask]
+
+print(f"\n--- R^2/RMSE within the transition region, split by prediction confidence ---")
+for name, part in [("Intermediate (0.1-0.9) slice", intermediate_df),
+                    ("Saturated (<0.1 or >0.9) slice", saturated_df)]:
+    if len(part) > 1:
+        r2, rmse = r2_rmse(part["target"].to_numpy(), part["q_pred"].to_numpy())
+        print(f"{name}: n={len(part):,}  R^2={r2:.4f}  RMSE={rmse:.4f}")
+    else:
+        print(f"{name}: n={len(part):,} -- too few frames to compute R^2")
+
+report_path = os.path.join(OUT_DIR, "confidence_split_report.txt")
+with open(report_path, "w") as f:
+    f.write(f"Transition-region Q range: [{q_low:.3f}, {q_high:.3f}]\n")
+    f.write(f"Frames in range: {len(sub):,}\n")
+    f.write(f"near 0: {near_0:.1%}  near 1: {near_1:.1%}  intermediate: {intermediate_mask.mean():.1%}\n")
+    f.write(f"Verdict: {verdict}\n\n")
+    for name, part in [("Intermediate (0.1-0.9) slice", intermediate_df),
+                        ("Saturated (<0.1 or >0.9) slice", saturated_df)]:
+        if len(part) > 1:
+            r2, rmse = r2_rmse(part["target"].to_numpy(), part["q_pred"].to_numpy())
+            f.write(f"{name}: n={len(part):,}  R^2={r2:.4f}  RMSE={rmse:.4f}\n")
+        else:
+            f.write(f"{name}: n={len(part):,} -- too few frames to compute R^2\n")
+print(f"\nSaved: {report_path}")
 
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.hist(q_pred, bins=40, range=(0, 1), color="steelblue", edgecolor="white")
