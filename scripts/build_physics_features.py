@@ -1,9 +1,8 @@
 """
-Physics-informed local features for the committor regression, per Prof.
-Kirmizialtin's Sep 2026 guidance: backbone torsions (phi/psi) + side-chain
-chi1 as cos/sin, side-chain-to-side-chain distances, hydrogen bonds, and
-salt bridges. No collective variables (his instruction) -- everything here
-is a per-residue or per-pair local coordinate.
+Physics-informed local features for the committor regression: backbone
+torsions (phi/psi) + side-chain chi1 as cos/sin, side-chain-to-side-chain
+distances, hydrogen bonds, and salt bridges. No collective variables --
+everything here is a per-residue or per-pair local coordinate.
 
 Merges the new features onto regression_dataset.csv via a *verified*
 frame_index join (regression_dataset.csv itself has no frame_index column,
@@ -85,9 +84,9 @@ for name, fn in [("phi", md.compute_phi), ("psi", md.compute_psi), ("chi1", md.c
 
 n_torsion_feats = len(new_features)
 print(f"Total torsion features: {n_torsion_feats}")
-print("(Prof. Kirmizialtin estimated ~42 from a rough 7-residue x 3-angle x 2 count in the "
-      "meeting -- MDTraj's actual phi/psi/chi1 counts above depend on which residues each "
-      "angle is defined for, so a different total here is expected, not a bug.)")
+print("(A rough 7-residue x 3-angle x 2 count would estimate ~42 -- MDTraj's actual "
+      "phi/psi/chi1 counts above depend on which residues each angle is defined for, "
+      "so a different total here is expected, not a bug.)")
 
 # ------------------------------------------------------------------
 # Step 3: side-chain-to-side-chain distances (|i-j| >= 3)
@@ -270,8 +269,8 @@ pruned_df = merged[kept + ["Committor_prob"]]
 out_pruned = OUT_DIR + "regression_dataset_pruned.csv"
 pruned_df.to_csv(out_pruned, index=False)
 print(f"\nFinal pruned feature set: {len(kept)} features -> {out_pruned}")
-print("(Pruning applied uses the all-frames correlation map, per the professor's instruction; "
-      "the transition-region-only drop list is saved separately for comparison, not applied.)")
+print("(Pruning applied uses the all-frames correlation map; the transition-region-only "
+      "drop list is saved separately for comparison, not applied.)")
 print("\nNext: rerun check_feature_reliance.py on this pruned set (Step 9 -- make sure nothing "
       "new is trivially predictive), then retrain with the same LightGBM/logit/weighting setup "
       "used for the 64-feature baseline (Step 8).")
