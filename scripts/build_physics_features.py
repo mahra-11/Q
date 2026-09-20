@@ -34,7 +34,7 @@ OUT_DIR = "/scratch/mma9420/committor_check/Q/physics_features/"
 CORR_THRESHOLD = 0.8
 MIN_SEQ_SEPARATION = 3   # side-chain distance pairs must be >= 3 apart in sequence
 HBOND_FREQ = 0.05        # keep H-bonds present in at least this fraction of frames
-EXPECTED_SEQ = ["GLY", "TYR", "ASP", "PRO", "GLU", "THR", "GLY", "THR", "TRP", "GLY"]  # GYDPETGTWG
+EXPECTED_SEQ = ["TYR", "TYR", "ASP", "PRO", "GLU", "THR", "GLY", "THR", "TRP", "TYR"]  # CLN025: YYDPETGTWY
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -60,8 +60,8 @@ print(f"{n_frames:,} frames, {len(residues)} residues: {actual_seq}")
 
 if actual_seq != EXPECTED_SEQ:
     sys.exit(
-        f"ERROR: topology residues {actual_seq} don't match expected chignolin "
-        f"sequence {EXPECTED_SEQ} (GYDPETGTWG). Wrong config/trajectory -- stop here."
+        f"ERROR: topology residues {actual_seq} don't match expected CLN025 "
+        f"sequence {EXPECTED_SEQ} (YYDPETGTWY). Wrong config/trajectory -- stop here."
     )
 
 n_hydrogens = sum(1 for a in traj.topology.atoms if a.element.symbol == "H")
@@ -133,7 +133,7 @@ else:
 
 # ------------------------------------------------------------------
 # Step 5: salt bridges -- N-terminal amine vs. each carboxylate group
-#   (no Lys/Arg in GYDPETGTWG, so the only positive charge is the N-term amine;
+#   (no Lys/Arg in CLN025's YYDPETGTWY, so the only positive charge is the N-term amine;
 #   negatives are Asp2, Glu4, and the C-terminal carboxylate on residue 9)
 # ------------------------------------------------------------------
 print("\nComputing salt-bridge distances...")
