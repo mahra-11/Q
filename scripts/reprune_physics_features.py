@@ -14,6 +14,8 @@ CORR_THRESHOLD = 0.8
 LEAKY_AND_LABEL_COLS = ["frame_index", "radius_gyration", "rmsd_to_folded", "Q",
                          "rg_bin", "q_bin", "cell_id", "Committor_prob"]
 NEW_FEATURE_PREFIXES = ("cos_", "sin_", "sc_dist_", "hb_", "saltbridge_")
+# Salt bridges are never auto-dropped -- see build_physics_features.py for why.
+PROTECTED_PREFIXES = ("saltbridge_",)
 
 print(f"Loading {MERGED_CSV}")
 merged = pd.read_csv(MERGED_CSV)
@@ -35,9 +37,15 @@ def prune(df, label):
     # records the exact correlation for every drop so this is auditable
     # rather than a black box -- a 0.99 duplicate and a 0.81 near-duplicate
     # are very different claims and both get logged, not collapsed.
-    ordered = sorted(X.columns, key=lambda c: (not c.startswith(NEW_FEATURE_PREFIXES), c))
+    ordered = sorted(
+        X.columns,
+        key=lambda c: (not c.startswith(PROTECTED_PREFIXES), not c.startswith(NEW_FEATURE_PREFIXES), c),
+    )
     keep, to_drop, reasons = [], [], []
     for c in ordered:
+        if c.startswith(PROTECTED_PREFIXES):
+            keep.append(c)
+            continue
         redundant_with = sorted(
             ((k, corr.loc[c, k]) for k in keep if abs(corr.loc[c, k]) > CORR_THRESHOLD),
             key=lambda kv: -abs(kv[1]),
@@ -55,7 +63,7 @@ def prune(df, label):
 
     print(f"\n[{label}] {X.shape[1]} candidate features -> dropping {len(to_drop)} "
           f"as redundant (pairwise |corr| > {CORR_THRESHOLD}, new physics features "
-          f"preferred over old generic ones when tied)")
+          f"preferred over old generic ones when tied, salt bridges never dropped)")
     return corr, to_drop, reasons_df
 
 

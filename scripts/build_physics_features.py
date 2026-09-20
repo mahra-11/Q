@@ -244,25 +244,43 @@ LEAKY_AND_LABEL_COLS = ["frame_index", "radius_gyration", "rmsd_to_folded", "Q",
 # features in the first place.
 NEW_FEATURE_PREFIXES = ("cos_", "sin_", "sc_dist_", "hb_", "saltbridge_")
 
+# Salt bridges are never auto-dropped, even if correlated > 0.8 with
+# something else: there are only 2-3 of them, they're one of the explicitly
+# requested physical feature categories, and unlike the torsion duplicates
+# (two computations of the literal same angle) a salt-bridge distance and,
+# say, a nearby chi1 angle are genuinely different quantities that happen to
+# be correlated -- not interchangeable. Whatever they're redundant with can
+# still be dropped; the salt-bridge side of that pair always survives.
+PROTECTED_PREFIXES = ("saltbridge_",)
+
 
 def prune(df, label):
     X = df.drop(columns=[c for c in LEAKY_AND_LABEL_COLS if c in df.columns])
     X = X.loc[:, X.std() > 0]
     corr = X.corr(method="pearson")
 
-    # Greedily keep columns in priority order (new physics features first,
-    # then old ones, alphabetically within each group for determinism);
-    # a column is dropped only if it's already redundant with something
-    # already accepted into `keep`. This is a naming-based tiebreaker, not
-    # a real physics judgment -- it does NOT mean the dropped column was
-    # less physically meaningful, just that it duplicated a column named
-    # more consistently with the rest of the new feature set. `reasons`
-    # records the exact correlation for every drop so this is auditable
-    # rather than a black box -- a 0.99 duplicate and a 0.81 near-duplicate
-    # are very different claims and both get logged, not collapsed.
-    ordered = sorted(X.columns, key=lambda c: (not c.startswith(NEW_FEATURE_PREFIXES), c))
+    # Greedily keep columns in priority order (protected features first,
+    # then other new physics features, then old ones, alphabetically within
+    # each group for determinism); a column is dropped only if it's already
+    # redundant with something already accepted into `keep`. This is a
+    # naming-based tiebreaker, not a real physics judgment -- it does NOT
+    # mean the dropped column was less physically meaningful, just that it
+    # duplicated a column named more consistently with the rest of the new
+    # feature set (or, for protected columns, that it's an explicitly
+    # requested category that's kept regardless of what it's correlated
+    # with). `reasons` records the exact correlation for every drop so this
+    # is auditable rather than a black box -- a 0.99 duplicate and a 0.81
+    # near-duplicate are very different claims and both get logged, not
+    # collapsed.
+    ordered = sorted(
+        X.columns,
+        key=lambda c: (not c.startswith(PROTECTED_PREFIXES), not c.startswith(NEW_FEATURE_PREFIXES), c),
+    )
     keep, to_drop, reasons = [], [], []
     for c in ordered:
+        if c.startswith(PROTECTED_PREFIXES):
+            keep.append(c)
+            continue
         redundant_with = sorted(
             ((k, corr.loc[c, k]) for k in keep if abs(corr.loc[c, k]) > CORR_THRESHOLD),
             key=lambda kv: -abs(kv[1]),
@@ -280,7 +298,7 @@ def prune(df, label):
 
     print(f"\n[{label}] {X.shape[1]} candidate features -> dropping {len(to_drop)} "
           f"as redundant (pairwise |corr| > {CORR_THRESHOLD}, new physics features "
-          f"preferred over old generic ones when tied)")
+          f"preferred over old generic ones when tied, salt bridges never dropped)")
     return corr, to_drop, reasons_df
 
 
