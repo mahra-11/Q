@@ -140,10 +140,14 @@ top = traj.topology
 
 
 def find_all_atoms(residue_idx, name_options):
-    """All atoms in `residue_idx` whose name is any of `name_options` (not just the first match)."""
+    """All atoms in `residue_idx` (0-based topology index) whose name is any of
+    `name_options` (not just the first match). Uses MDTraj's `resid` selection
+    keyword (0-based residue.index), not `residue`/`resSeq` (PDB file numbering,
+    usually 1-indexed) -- those are different keywords and silently match
+    nothing if confused, which is what happened here."""
     found = []
     for name in name_options:
-        found.extend(top.select(f"residue {residue_idx} and name {name}"))
+        found.extend(top.select(f"resid {residue_idx} and name {name}"))
     return np.array(sorted(set(found)), dtype=int)
 
 
