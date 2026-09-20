@@ -237,15 +237,38 @@ print(f"Saved merged dataset: {merged.shape[0]:,} rows x {merged.shape[1]} cols 
 LEAKY_AND_LABEL_COLS = ["frame_index", "radius_gyration", "rmsd_to_folded", "Q",
                          "rg_bin", "q_bin", "cell_id", "Committor_prob"]
 
+# The new physics features (torsions, side-chain distances, H-bonds, salt
+# bridges) all use these prefixes. When a new feature duplicates an old
+# generic one (e.g. cos_phi_res2 vs. the old phi_cos_2), the new one should
+# win the tie -- that's the whole point of adding physically-interpretable
+# features in the first place.
+NEW_FEATURE_PREFIXES = ("cos_", "sin_", "sc_dist_", "hb_", "saltbridge_")
+
 
 def prune(df, label):
     X = df.drop(columns=[c for c in LEAKY_AND_LABEL_COLS if c in df.columns])
     X = X.loc[:, X.std() > 0]
     corr = X.corr(method="pearson")
-    upper = corr.abs().where(np.triu(np.ones(corr.shape, dtype=bool), k=1))
-    to_drop = sorted({c for c in upper.columns if (upper[c] > CORR_THRESHOLD).any()})
+
+    # Greedily keep columns in priority order (new physics features first,
+    # then old ones, alphabetically within each group for determinism);
+    # a column is dropped only if it's already redundant with something
+    # already accepted into `keep`. This is what "prefer keeping the more
+    # physically interpretable one" actually requires -- a plain "drop
+    # whichever column comes later in the file" rule has no opinion on
+    # which member of a pair is more interpretable.
+    ordered = sorted(X.columns, key=lambda c: (not c.startswith(NEW_FEATURE_PREFIXES), c))
+    keep, to_drop = [], []
+    for c in ordered:
+        if any(abs(corr.loc[c, k]) > CORR_THRESHOLD for k in keep):
+            to_drop.append(c)
+        else:
+            keep.append(c)
+    to_drop = sorted(to_drop)
+
     print(f"\n[{label}] {X.shape[1]} candidate features -> dropping {len(to_drop)} "
-          f"as redundant (pairwise |corr| > {CORR_THRESHOLD})")
+          f"as redundant (pairwise |corr| > {CORR_THRESHOLD}, new physics features "
+          f"preferred over old generic ones when tied)")
     return corr, to_drop
 
 
