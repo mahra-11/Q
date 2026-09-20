@@ -253,43 +253,61 @@ def prune(df, label):
     # Greedily keep columns in priority order (new physics features first,
     # then old ones, alphabetically within each group for determinism);
     # a column is dropped only if it's already redundant with something
-    # already accepted into `keep`. This is what "prefer keeping the more
-    # physically interpretable one" actually requires -- a plain "drop
-    # whichever column comes later in the file" rule has no opinion on
-    # which member of a pair is more interpretable.
+    # already accepted into `keep`. This is a naming-based tiebreaker, not
+    # a real physics judgment -- it does NOT mean the dropped column was
+    # less physically meaningful, just that it duplicated a column named
+    # more consistently with the rest of the new feature set. `reasons`
+    # records the exact correlation for every drop so this is auditable
+    # rather than a black box -- a 0.99 duplicate and a 0.81 near-duplicate
+    # are very different claims and both get logged, not collapsed.
     ordered = sorted(X.columns, key=lambda c: (not c.startswith(NEW_FEATURE_PREFIXES), c))
-    keep, to_drop = [], []
+    keep, to_drop, reasons = [], [], []
     for c in ordered:
-        if any(abs(corr.loc[c, k]) > CORR_THRESHOLD for k in keep):
+        redundant_with = sorted(
+            ((k, corr.loc[c, k]) for k in keep if abs(corr.loc[c, k]) > CORR_THRESHOLD),
+            key=lambda kv: -abs(kv[1]),
+        )
+        if redundant_with:
             to_drop.append(c)
+            for kept_col, r in redundant_with:
+                reasons.append({"dropped_feature": c, "kept_feature": kept_col, "correlation": r})
         else:
             keep.append(c)
     to_drop = sorted(to_drop)
+    reasons_df = pd.DataFrame(reasons).sort_values(
+        "correlation", key=lambda s: s.abs(), ascending=False
+    )
 
     print(f"\n[{label}] {X.shape[1]} candidate features -> dropping {len(to_drop)} "
           f"as redundant (pairwise |corr| > {CORR_THRESHOLD}, new physics features "
           f"preferred over old generic ones when tied)")
-    return corr, to_drop
+    return corr, to_drop, reasons_df
 
 
 print("\nPruning on all frames...")
-corr_all, drop_all = prune(merged, "all frames")
+corr_all, drop_all, reasons_all = prune(merged, "all frames")
 corr_all.to_csv(OUT_DIR + "pearson_corr_all_frames.csv")
 with open(OUT_DIR + "features_to_drop_all_frames.txt", "w") as f:
     f.write("\n".join(drop_all))
+reasons_all.to_csv(OUT_DIR + "drop_reasons_all_frames.csv", index=False)
 
 trans = merged[(merged["Committor_prob"] > 0.2) & (merged["Committor_prob"] < 0.8)]
 print(f"\nPruning on transition-region frames only ({len(trans):,} rows)...")
-corr_trans, drop_trans = prune(trans, "transition region")
+corr_trans, drop_trans, reasons_trans = prune(trans, "transition region")
 corr_trans.to_csv(OUT_DIR + "pearson_corr_transition_region.csv")
 with open(OUT_DIR + "features_to_drop_transition_region.txt", "w") as f:
     f.write("\n".join(drop_trans))
+reasons_trans.to_csv(OUT_DIR + "drop_reasons_transition_region.csv", index=False)
 
 only_in_trans = sorted(set(drop_trans) - set(drop_all))
 if only_in_trans:
     print(f"\n{len(only_in_trans)} features are redundant in the transition region but NOT "
           f"redundant over all frames -- worth a manual look before trusting the global list:")
     print(only_in_trans)
+
+print(f"\nWeakest (lowest-|correlation|) drops on all frames -- worth a manual look, "
+      f"since these are the least clearly redundant of the bunch:")
+print(reasons_all.reindex(reasons_all["correlation"].abs().sort_values().index).head(10).to_string(index=False))
 
 kept = [c for c in merged.columns if c not in LEAKY_AND_LABEL_COLS and c not in drop_all]
 pruned_df = merged[kept + ["Committor_prob"]]
