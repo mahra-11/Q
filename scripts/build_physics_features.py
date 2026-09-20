@@ -327,7 +327,23 @@ print(f"\nWeakest (lowest-|correlation|) drops on all frames -- worth a manual l
       f"since these are the least clearly redundant of the bunch:")
 print(reasons_all.reindex(reasons_all["correlation"].abs().sort_values().index).head(10).to_string(index=False))
 
-kept = [c for c in merged.columns if c not in LEAKY_AND_LABEL_COLS and c not in drop_all]
+# A feature only actually gets dropped if BOTH passes agree it's redundant. Two
+# features can correlate > 0.8 across all 534,743 frames (dominated by the easy
+# folded/unfolded majority) while behaving quite differently in the sparse,
+# scientifically important transition region -- dropping on the all-frames view
+# alone can silently discard real transition-region signal (confirmed: this is
+# exactly what happened to contact_res1_res8 / sc_dist_res1_res8, historically
+# the single strongest transition-region feature, on the first version of this
+# rule -- both got dropped because each matched something ELSE globally, even
+# though neither is actually redundant within the transition region).
+final_drop = sorted(set(drop_all) & set(drop_trans))
+rescued = sorted(set(drop_all) - set(drop_trans))
+if rescued:
+    print(f"\n{len(rescued)} features were redundant over all frames but NOT within the "
+          f"transition region -- rescued (kept) since only agreement from both passes "
+          f"actually drops a feature: {rescued}")
+
+kept = [c for c in merged.columns if c not in LEAKY_AND_LABEL_COLS and c not in final_drop]
 pruned_df = merged[kept + ["Committor_prob"]]
 out_pruned = OUT_DIR + "regression_dataset_pruned.csv"
 pruned_df.to_csv(out_pruned, index=False)
