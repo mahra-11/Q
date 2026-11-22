@@ -1,0 +1,207 @@
+HANDOFF: LITERATURE-BASED FEATURES FOR THE CLN025 COMMITTOR MODEL
+==================================================================
+
+1. CONTEXT
+----------
+Goal: find features, backed by published papers, that help a LightGBM
+regression predict the committor for CLN025 (YYDPETGTWY), especially in
+the transition region.
+
+Numbering: 0-indexed, confirmed against EXPECTED_SEQ in
+build_physics_features.py
+
+    index:   0    1    2    3    4    5    6    7    8    9
+    residue: Tyr  Tyr  Asp  Pro  Glu  Thr  Gly  Thr  Trp  Tyr
+
+Papers use 1-indexed numbering (Tyr1 ... Tyr10). Subtract 1 to convert.
+
+Current feature table:
+    /scratch/mma9420/committor_check/Q/physics_features/regression_dataset_pruned.csv
+    (about 100 features plus Committor_prob)
+
+Trajectory:
+    /scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/CLN025-0-protein-all_fiti_alpC.xtc
+Topology:
+    /scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/folded_struc.pdb
+
+The trajectory is most likely the D.E. Shaw 106 microsecond CHARMM22*
+trajectory at 340 K, going by the file name. NOT YET CONFIRMED.
+
+Top features found by the current model:
+    sc_dist_res1_res6 (by far the most important)
+    sc_dist_res1_res7, sc_dist_res1_res8
+    contact_res1_res7, contact_res1_res8
+    hb_2ASPN_7THRO
+    saltbridge_Nterm_Cterm9
+
+
+2. CORRECTION MADE ALONG THE WAY
+--------------------------------
+sc_dist_res1_res6 was described as "Tyr1 to Thr5". It is actually
+Tyr1 to Gly6. Gly has no side chain, so the pipeline uses its
+closest-heavy-atom fallback: the feature is the minimum heavy-atom
+distance from Tyr1's side chain to the Gly6 BACKBONE. It measures where
+Tyr1 sits relative to the beta-turn.
+
+
+3. PAPERS READ IN FULL (3)
+--------------------------
+
+P1. Kang, Trizio & Parrinello, Nature Computational Science 2024
+    (arXiv 2401.05279)
+    Where: PDF p. 6 (Fig. 4), p. 7 (section D);
+           supporting information pp. 27-29 (Figs. S19, S20, S21)
+    Findings:
+    - Two transition-state routes:
+        TS-up:   Asp2 side chain (OD1/OD2) bonded to Thr5 N AND Thr5 OG1
+                 ("bidentate")
+        TS-down: backbone Asp2 N to Thr7 O ("monodentate")
+    - Most important inputs: Cα distances Tyr1-Thr5 and Asp2-Thr7.
+    - Turn bend (Cα Pro3 to Cα Gly6, about 0.5 nm) also forms in
+      unfolded frames, so it does not separate the states.
+
+P2. "Navigating committor landscape of biomolecules with a general
+    pairwise interaction model" (arXiv 2606.31832)
+    Where: main text pp. 3-4 (Fig. 3); supporting information p. 12
+           (Table S1, equation S2), p. 17 (Fig. S2)
+    Findings:
+    - Same two routes (called TS^U and TS^D).
+    - On TS^U, unfolding STARTS with Asp2 N - Thr7 O breaking, while
+      Asp2 OD - Thr5 N stays intact.
+    - On TS^D, the Gly6-Thr7 peptide bond flips by about 180 degrees.
+    - Tyr1/Trp8 stack on TS^U; on TS^D a Tyr1 N - Trp8 O hydrogen bond
+      forms instead.
+    - Linear formula for the committor:
+        0.53 x d(Tyr0 O - Trp8 O)
+      + 0.40 x d(Asp2 O - Thr7 N)
+      + 0.21 x d(Tyr1 N - Tyr9 C)
+      + 0.21 x d(Tyr0 N - Thr7 O)
+      + 0.12 x d(Tyr0 O - Tyr9 O)
+      - 0.11 x d(Glu4 O - Tyr9 O)
+      + 0.02 x d(Asp2 O - Gly6 O)
+
+P3. Sobieraj & Setny, J. Chem. Theory Comput. 2022, 18, 1936-1944
+    (Granger causality analysis)
+    Where: p. 1938 (methods), p. 1940 (Figs. 2 and 3),
+           pp. 1941-1942 (Fig. 5)
+    Findings:
+    - Uses the D.E. Shaw trajectory (534,743 frames, 0.2 ns spacing).
+      Contacts are defined as shortest heavy-atom distance, the same as
+      your closest-heavy approach.
+    - Folding is zipper-like and driven by the turn.
+    - A Tyr0-Asp2 network in the unfolded state must break first.
+    - Cross-strand contacts (Tyr1-Trp8, Tyr0-Tyr9) FINISH folding
+      rather than start it.
+    - Fig. 3 gives how often each hydrogen bond is formed in each state.
+
+
+4. THE FOLDING STORY THE PAPERS AGREE ON
+---------------------------------------
+Step 1. Unfolded: the N-terminal amine holds the Asp2 side chain.
+Step 2. That hold breaks, and Asp2 is free.
+Step 3. Transition state: Asp2 forms the turn hydrogen bonds
+        (to Thr5 N and OG1, Gly6 N, Thr7 O). Which form first defines
+        the two routes.
+Step 4. Folded: the strands lock together (Tyr1-Trp8 packing, salt
+        bridge, Tyr0 O - Tyr9 N, Tyr0 ring covering the ends).
+
+For the model: the current top features mostly describe steps 3 and 4.
+The missing information is Asp2's turn hydrogen bonds.
+
+
+5. FEATURES TO ADD (confirmed, not in the pruned file)
+-----------------------------------------------------
+Percentages are how often the bond is formed:
+unfolded -> transition state -> folded (from P3 Fig. 3).
+
+Priority 1. Asp2 OD1/OD2 to Thr5 N
+            All 3 papers. P3: 0% -> 30% -> 64%
+Priority 2. Asp2 O to Gly6 N
+            P3: 6% -> 48% -> 72%
+Priority 3. Asp2 N to Gly6 O
+            P2: one axis of its transition-state plot
+Priority 4. Tyr0 O to Trp8 O
+            P2: largest weight in its formula
+Priority 5. Tyr1 N to Trp8 O
+            P2: forms on the TS^D route
+Priority 6. Tyr0 O to Tyr9 N
+            P3: 0% -> 14% -> 89%
+Priority 7. Tyr0 to Asp2, shortest heavy-atom distance
+            P3: one of the top 4 "initiator" contacts
+
+
+6. ALREADY IN THE SET AND CONFIRMED AS IMPORTANT (keep)
+------------------------------------------------------
+hb_2ASPN_7THRO
+    The TS-down bond, and the first to break on TS^U.
+hb_5THROG1_2ASPOD1, hb_5THROG1_2ASPOD2
+    The OG1 half of the TS-up bond.
+hb_7THRN_2ASPO
+saltbridge_Nterm_Asp2
+    The main Tyr0-Asp2 network bond.
+saltbridge_Nterm_Cterm9
+cos_phi_res6, sin_phi_res6, cos_psi_res6, sin_psi_res6,
+cos_phi_res7, sin_phi_res7
+    Capture the Gly6-Thr7 peptide-bond flip.
+
+
+7. DROPPED OR LOW PRIORITY
+--------------------------
+- Asp2 side chain to Thr7: a duplicate of hb_2ASPN_7THRO. The original
+  atom guess was wrong.
+- Turn bend, Cα Pro3 to Cα Gly6: also formed in unfolded frames
+  (P1 Fig. S20).
+- Tyr0-Tyr9 rings: P3 found no distinct importance.
+- Tyr0 ring covering the ends: real (P3 p. 1941), but it happens AFTER
+  the transition state.
+- Tyr1-Trp8 ring angle: mixed evidence (P2 supports it, P3 does not).
+- Asp2-Glu4 intermediate turn: comes only from an unread Mitsutake
+  paper (arXiv 1505.05287), which may not be about CLN025. The closest
+  related bond is already in the set (hb_4GLUN_2ASPOD1/2).
+  Recommended to skip.
+
+
+8. OPEN QUESTIONS
+-----------------
+
+Q1. Was Asp2 OD to Thr5 N computed and then pruned, or never computed?
+    This is the most useful check left.
+
+    Copy and paste this. It searches every CSV in the folder:
+
+    for f in /scratch/mma9420/committor_check/Q/physics_features/*.csv; do echo "$f"; head -1 "$f" | tr ',' '\n' | grep -n "5THRN"; done
+
+    Check the output:
+    - If hb_5THRN_2ASPOD1 or hb_5THRN_2ASPOD2 appears in any file, it
+      was computed and then pruned. Check why in
+      build_physics_features.py.
+    - If only hb_5THRN_2ASPO appears, it was never computed. Add it.
+
+Q2. Is the trajectory the D.E. Shaw one?
+
+    Copy and paste this to count the frames:
+
+    python3 -c "import mdtraj as md; t=md.load('/scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/CLN025-0-protein-all_fiti_alpC.xtc', top='/scratch/ccbg/B_DNA-Folding/Chignolin_Miles/Chignolin_Traj/f_traj/folded_struc.pdb'); print(t.n_frames, t.timestep)"
+
+    Check: P3's copy has 534,743 frames at 0.2 ns (200 ps) spacing.
+    A match strongly suggests it is the same trajectory.
+    Note: this loads the whole trajectory into memory, so run it in a
+    SLURM job or an interactive compute session, not on the login node.
+
+Q3. Exact Gly6 phi/psi ranges for native vs misfolded: unchecked.
+    Sources: the electric-field paper (J. Phys. Chem. B 2022, vol. 126,
+    p. 376) and the pi-turn paper (PMC9054626). The angles are already
+    features, so this only matters for interpretation.
+
+
+9. THINGS NOT TO REPEAT
+-----------------------
+- Everything said before the papers were read came from search
+  summaries. Only the P1, P2 and P3 claims above are verified against
+  the PDFs.
+- lit_features.py and check_res1_res6.py from earlier in the
+  conversation used placeholder file names and an out-of-date feature
+  list. Do not run them as they are.
+- build_physics_features.py and the LightGBM training script are NOT
+  in the mahra-11/Q repo. Their atom selections and pruning rules have
+  not been reviewed.
