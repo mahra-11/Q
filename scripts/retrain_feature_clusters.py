@@ -23,9 +23,20 @@ a cluster would massively overweight long dwell periods in one cluster
 into one "visit" (representative = the visit's middle frame) before
 averaging, exactly as the original Rg/Q-grid committor was built.
 
-Depends on retrain_balanced_pca_features.py having already run --
-reads its pca_feature_scores.csv for the top-N_FEATURES feature list, so
-clustering uses the PI's PCA-reduced set, not the raw 101.
+Clusters on the FULL 101-feature pruned set, not a PCA-reduced subset --
+an earlier version depended on retrain_balanced_pca_features.py's
+PCA-selected top-10 features, but that PCA selection was later shown to
+be unsupervised and uninformative (it picked whatever varied most across
+the whole trajectory, not what predicts the committor, and scored far
+worse than using all 101 features). Nothing tested since has shown that
+cutting to 10 features beats using all 101, so there's no basis for
+forcing that cut before clustering either.
+
+Applies the project's standard inverse-frequency sample weighting when
+training on the cluster-averaged label -- an earlier round of balance/
+PCA experiments omitted this by oversight and produced a spurious,
+catastrophic-looking collapse that weighting alone fixed; this script
+carries that lesson forward rather than repeating the omission.
 
 Evaluation stays against the EXISTING, established Committor_prob on the
 project's standard held-out test set -- not the new cluster-based label --
@@ -45,15 +56,15 @@ import lightgbm as lgb
 
 MERGED_CSV = "/scratch/mma9420/committor_check/Q/physics_features/regression_dataset_with_physics_features.csv"
 FATE_CSV = "/scratch/mma9420/committor_check/Q/Q_values_allframes_with_fate.csv"
-PCA_SCORES_CSV = "/scratch/mma9420/committor_check/Q/physics_features/retrain_balanced_pca/pca_feature_scores.csv"
+PRUNED_CSV = "/scratch/mma9420/committor_check/Q/physics_features/regression_dataset_pruned.csv"
 OUT_DIR = "/scratch/mma9420/committor_check/Q/physics_features/retrain_feature_clusters/"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-N_FEATURES = 10
 SILHOUETTE_SAMPLE_SIZE = 20000
 CANDIDATE_K = [10, 20, 30, 50, 75, 100, 150]
 RANDOM_STATE = 42
 EPS = 1e-4
+N_WEIGHT_BINS = 20
 TRANSITION_LOW, TRANSITION_HIGH = 0.2, 0.8
 
 N_BLOCKS = 10
@@ -68,19 +79,14 @@ REF_PRUNED_TRANSONLY_TRANSITION = 0.3914
 REF_CONFIDENCE_FILTERED_NEW_FULLTEST = 0.3333
 REF_CONFIDENCE_FILTERED_NEW_HICONF = 0.4609
 
-if not os.path.exists(PCA_SCORES_CSV):
-    raise FileNotFoundError(
-        f"{PCA_SCORES_CSV} not found -- run retrain_balanced_pca_features.py first, "
-        "this script clusters on its top-N_FEATURES PCA-selected feature list."
-    )
-
 # ------------------------------------------------------------------
-# Step 1: reduced feature set from the PCA job, plus raw per-frame Fate
-# (NOT the existing grid-averaged Committor_prob).
+# Step 1: the full 101-feature pruned set (not a reduced subset -- see
+# docstring), plus raw per-frame Fate (NOT the existing grid-averaged
+# Committor_prob).
 # ------------------------------------------------------------------
-pca_scores = pd.read_csv(PCA_SCORES_CSV, index_col=0)
-feature_cols = pca_scores.index[:N_FEATURES].tolist()
-print(f"Clustering on PI-recommended PCA-reduced feature set ({len(feature_cols)}): {feature_cols}")
+pruned_cols = pd.read_csv(PRUNED_CSV, nrows=0).columns.tolist()
+feature_cols = [c for c in pruned_cols if c != "Committor_prob"]
+print(f"Clustering on the full pruned feature set ({len(feature_cols)}): {feature_cols}")
 
 print(f"\nLoading {MERGED_CSV}")
 df = pd.read_csv(MERGED_CSV, usecols=["frame_index"] + feature_cols + ["Committor_prob"])
@@ -198,6 +204,19 @@ X = df[feature_cols]
 y_new_clipped = np.clip(y_new, EPS, 1 - EPS)
 y_new_logit = np.log(y_new_clipped / (1 - y_new_clipped))
 
+# Inverse-frequency sample weighting on the TRAINING target's own
+# distribution (cluster_committor among training rows) -- the project's
+# standard scheme, carried forward after an earlier round of experiments
+# omitted it by oversight and produced a spurious collapse that weighting
+# alone fixed. Computed only over valid (non-NaN) training labels.
+train_y_for_weights = y_new[idx_train]
+bin_edges = np.linspace(0, 1, N_WEIGHT_BINS + 1)
+bin_idx = np.clip(np.digitize(train_y_for_weights, bin_edges) - 1, 0, N_WEIGHT_BINS - 1)
+bin_counts = np.bincount(bin_idx, minlength=N_WEIGHT_BINS)
+train_weights = np.array([1.0 / bin_counts[b] if bin_counts[b] > 0 else 0.0 for b in bin_idx])
+train_weights = train_weights / train_weights.mean()
+print(f"\nComputed inverse-frequency weights on the training label distribution ({N_WEIGHT_BINS} bins)")
+
 y_old_test = y_old[idx_test]
 mask_test_tr = (y_old_test > TRANSITION_LOW) & (y_old_test < TRANSITION_HIGH)
 print(f"Transition-region test rows (by the established Committor_prob): {mask_test_tr.sum():,}")
@@ -211,11 +230,11 @@ def inv_logit(y):
 # Step 7: train on the new cluster-averaged label, evaluate against the
 # EXISTING established Committor_prob on the standard test set.
 # ------------------------------------------------------------------
-print("\nTraining on cluster-averaged committor labels...")
+print("\nTraining on cluster-averaged committor labels (weighted)...")
 model = lgb.LGBMRegressor(
     n_estimators=500, learning_rate=0.05, num_leaves=31, random_state=RANDOM_STATE, n_jobs=2
 )
-model.fit(X.iloc[idx_train], y_new_logit[idx_train])
+model.fit(X.iloc[idx_train], y_new_logit[idx_train], sample_weight=train_weights)
 
 pred_test = inv_logit(model.predict(X.iloc[idx_test]))
 r2_test_overall = r2_score(y_old_test, pred_test)
