@@ -73,13 +73,23 @@ print("\nRunning PCA on standardized features to rank feature importance...")
 scaler = StandardScaler()
 X_scaled_full = scaler.fit_transform(df[feature_cols_full].values)
 
-pca = PCA(random_state=RANDOM_STATE)
+# IMPORTANT: must restrict to a SUBSET of components, not the full rank.
+# For standardized features, summing (explained_variance_ratio * loading^2)
+# across ALL components reconstructs each feature's own variance, which is
+# exactly 1.0 for every standardized feature -- so a full-rank sum gives
+# every feature the identical score (1 / n_features) and the "ranking" is
+# meaningless. Restricting to the top components that explain most of the
+# variance is what actually differentiates features.
+pca = PCA(n_components=0.90, random_state=RANDOM_STATE)
 pca.fit(X_scaled_full)
+print(f"Kept {pca.n_components_} components to explain "
+      f"{pca.explained_variance_ratio_.sum():.1%} of variance")
 
-# Score each feature by its PCA-weighted contribution: sum over all
-# components of (explained_variance_ratio * squared loading). A feature
-# that loads heavily onto high-variance components scores higher.
-loadings = pca.components_  # shape (n_components, n_features)
+# Score each feature by its PCA-weighted contribution across only the
+# retained top components: sum of (explained_variance_ratio * squared
+# loading). A feature that loads heavily onto high-variance components
+# scores higher.
+loadings = pca.components_  # shape (n_components_kept, n_features)
 evr = pca.explained_variance_ratio_
 feature_scores = pd.Series(
     np.sum((loadings ** 2) * evr[:, None], axis=0),
